@@ -1,8 +1,10 @@
 use async_trait::async_trait;
+use colored::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
 use super::Tool;
@@ -149,25 +151,51 @@ impl Tool for Edit {
     async fn execute(&self, input: Value) -> Result<String> {
         let p: EditInput = serde_json::from_value(input)?;
         let current = fs::read_to_string(&p.path).map_err(AgentError::FileError)?;
-        
+
         if !current.contains(&p.old_content) {
             return Err(AgentError::ToolError(format!("not found in {}", p.path)));
         }
-        
-        let new = current.replacen(&p.old_content, &p.new_content, 1);
-        fs::write(&p.path, &new).map_err(AgentError::FileError)?;
 
-        let diff = TextDiff::from_lines(&current, &new);
-        let mut out = String::new();
+        let new = current.replacen(&p.old_content, &p.new_content, 1);
+
+        // show diff
+        println!("\n{}", format!("--- {}", p.path).red());
+        println!("{}", format!("+++ {}", p.path).green());
+
+        let diff = TextDiff::from_lines(&p.old_content, &p.new_content);
+        let mut context_lines = 0;
         for change in diff.iter_all_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
-                ChangeTag::Equal => " ",
-            };
-            out.push_str(&format!("{}{}", sign, change));
+            match change.tag() {
+                ChangeTag::Delete => {
+                    print!("{}", format!("-{}", change).red());
+                    context_lines = 0;
+                }
+                ChangeTag::Insert => {
+                    print!("{}", format!("+{}", change).green());
+                    context_lines = 0;
+                }
+                ChangeTag::Equal => {
+                    if context_lines < 2 {
+                        print!(" {}", change);
+                        context_lines += 1;
+                    }
+                }
+            }
         }
-        Ok(out)
+
+        // ask for confirmation
+        print!("\napply changes? (y/n) ");
+        io::stdout().flush().unwrap();
+
+        let mut response = String::new();
+        io::stdin().read_line(&mut response).unwrap();
+
+        if response.trim().to_lowercase() != "y" {
+            return Ok("changes rejected".to_string());
+        }
+
+        fs::write(&p.path, &new).map_err(AgentError::FileError)?;
+        Ok("changes applied".to_string())
     }
 }
 

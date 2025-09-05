@@ -19,4 +19,3 @@ pub enum AgentError {
 }
 
 pub type Result<T> = std::result::Result<T, AgentError>;
-
